@@ -36,17 +36,13 @@ Missing data rates were computed for each predictor in the training set and are 
 
 **Imbalance handling.** Stroke affected 4.0% of participants, creating a severe class imbalance. We compared three strategies:
 
-1. *No balancing.* Models trained on the original imbalanced data. This serves as a baseline to demonstrate the "accuracy trap" — models that achieve high accuracy by predicting the majority class exclusively.
-2. *Cost-sensitive learning.* Models penalize misclassification of the minority class more heavily. For logistic regression and random forest, we set `class_weight='balanced'`, which weights each class inversely proportional to its frequency. For XGBoost, we set `scale_pos_weight` equal to the ratio of negative to positive samples in the training set (approximately 24.6).
-3. *SMOTE.* Synthetic Minority Over-sampling Technique [Chawla 2002] was applied to generate synthetic stroke-positive samples in the training set. During cross-validation, SMOTE was applied independently within each training fold to prevent data leakage — synthetic samples generated from one fold's training data never appeared in that fold's validation set. For the final temporal evaluation, SMOTE was applied to the full training set; the test set was never modified.
+The first strategy, *no balancing*, trained models on the original imbalanced distribution and served as a baseline to demonstrate the "accuracy trap" — models that achieve high accuracy by predicting the majority class exclusively. The second strategy, *cost-sensitive learning*, penalized misclassification of the minority class more heavily. For logistic regression and random forest, we set class weights inversely proportional to class frequency; for XGBoost, we set the positive-class weight equal to the ratio of negative to positive samples in the training set (approximately 24.6). The third strategy, *SMOTE* (Synthetic Minority Over-sampling Technique) [Chawla 2002], generated synthetic stroke-positive samples in the training set. During cross-validation, SMOTE was applied independently within each training fold to prevent data leakage — synthetic samples generated from one fold's training data never appeared in that fold's validation set. For the final temporal evaluation, SMOTE was applied to the full training set; the test set was never modified.
 
 ## 3.7 Models
 
 We selected three models that appear most frequently in the stroke prediction literature [Chadha 2024, Asadi 2024]:
 
-1. **Logistic Regression (LR).** A linear model with L2 regularization (default). Maximum iterations set to 1,000 to ensure convergence.
-2. **Random Forest (RF).** An ensemble of 300 decision trees with maximum depth 15 and parallelized training.
-3. **XGBoost.** Gradient-boosted trees with 300 estimators, maximum depth 6, and learning rate 0.1, using log loss as the evaluation metric.
+Logistic Regression (LR) was configured as a linear model with L2 regularization and a maximum of 1,000 iterations to ensure convergence. Random Forest (RF) was configured as an ensemble of 300 decision trees with a maximum depth of 15. XGBoost was configured with 300 gradient-boosted trees, a maximum depth of 6, a learning rate of 0.1, and log loss as the evaluation metric.
 
 All models used a fixed random seed of 42 for reproducibility. Hyperparameters were not tuned via grid search; we used reasonable defaults consistent with those reported in the reviewed literature. This design choice was intentional: the paper's thesis is that data quality and evaluation methodology matter more than model optimization.
 
