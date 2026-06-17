@@ -6,6 +6,7 @@ Edit this file to change the experiment without touching any logic.
 import os
 
 RANDOM_STATE = 42
+BOOTSTRAP_ITERS = 1000
 CSV_PATH = os.environ.get('NHANES_CSV', 'nhanes_merged.csv')
 RESULTS_DIR = os.environ.get('NHANES_RESULTS', 'results')
 

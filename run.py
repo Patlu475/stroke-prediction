@@ -9,14 +9,16 @@ Usage:
     python run.py
 """
 
-import os, sys, warnings
+import os, warnings
+import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, average_precision_score
+from itertools import combinations
 
-from config import FEATURE_SETS, STRATEGIES, RESULTS_DIR
+from config import FEATURE_SETS, STRATEGIES, RESULTS_DIR, BOOTSTRAP_ITERS
 from src.data import load_data, prepare_features, get_missing_rates
 from src.models import train_and_evaluate, cross_validate
-from src.evaluation import compute_metrics, framingham_score
+from src.evaluation import compute_metrics, framingham_score, bootstrap_metrics, delong_test
 from src.fairness import run_fairness_analysis
 from src.tables import (
     table1_demographics, table2_dataset_comparison, table3_missing_data,
@@ -26,9 +28,11 @@ from src.plots import (
     fig1_pr_auc_bars, fig2_roc_pr_curves, fig3_calibration,
     fig4_feature_importance, fig5_confusion_matrices, fig6_fairness_bars,
 )
+from src.tripod import generate_tripod_checklist
 
 warnings.filterwarnings('ignore')
 os.makedirs(RESULTS_DIR, exist_ok=True)
+os.makedirs(f'{RESULTS_DIR}/supplementary', exist_ok=True)
 
 
 def main():
@@ -48,6 +52,7 @@ def main():
     best_model = None
     best_pr_auc = 0
     best_info = {}
+    trained_models_probs = {}
 
     for fs_name, fs_cols in FEATURE_SETS.items():
         X_train, X_test, y_train, y_test, _, _ = prepare_features(train_df, test_df, fs_cols)
@@ -85,6 +90,10 @@ def main():
 
                 mname = r['model']
                 cv_info = cv[mname]
+
+                y_prob = models[mname].predict_proba(X_test)[:, 1]
+                trained_models_probs[(fs_name, strategy, mname)] = y_prob
+
                 print(f"    {mname:8s}  "
                       f"CV={cv_info['mean_pr_auc']:.3f}+/-{cv_info['std_pr_auc']:.3f}  "
                       f"Test PR-AUC={r['pr_auc']:.3f}  ROC={r['roc_auc']:.3f}  "
@@ -110,14 +119,70 @@ def main():
     res.to_csv(f'{RESULTS_DIR}/main_results.csv', index=False)
 
     cv_df = pd.DataFrame(all_cv)
-    cv_df.to_csv(f'{RESULTS_DIR}/cv_results.csv', index=False)
+    cv_df.to_csv(f'{RESULTS_DIR}/supplementary/cv_results.csv', index=False)
 
     print(f"\n{'='*60}")
     print("ALL RESULTS — TEMPORAL TEST SET (sorted by PR-AUC)")
     print(f"{'='*60}")
     print(res.sort_values('pr_auc', ascending=False).to_string(index=False, float_format='%.3f'))
 
-    # ── 4. Framingham baseline ──
+    # ── 4. Bootstrap confidence intervals ──
+    print(f"\n{'='*60}")
+    print(f"BOOTSTRAP 95% CIs ({BOOTSTRAP_ITERS} iterations)")
+    print(f"{'='*60}")
+    boot_rows = []
+    for fs_name in FEATURE_SETS:
+        _, X_test, _, y_test, _, _ = prepare_features(train_df, test_df, FEATURE_SETS[fs_name])
+        best_for_fs = res[res['features'] == fs_name].sort_values('pr_auc', ascending=False).iloc[0]
+        key = (fs_name, best_for_fs['strategy'], best_for_fs['model'])
+        y_prob = trained_models_probs[key]
+        y_pred = (y_prob >= 0.5).astype(int)
+
+        boot = bootstrap_metrics(y_test, y_pred, y_prob, n_iterations=BOOTSTRAP_ITERS)
+
+        print(f"\n  {best_for_fs['model']} + {fs_name} + {best_for_fs['strategy']}:")
+        row = {'features': fs_name, 'model': best_for_fs['model'], 'strategy': best_for_fs['strategy']}
+        for metric, (point, lo, hi) in boot.items():
+            print(f"    {metric:12s}: {point:.3f} [{lo:.3f}, {hi:.3f}]")
+            row[f'{metric}'] = point
+            row[f'{metric}_ci_lo'] = lo
+            row[f'{metric}_ci_hi'] = hi
+        boot_rows.append(row)
+
+    boot_df = pd.DataFrame(boot_rows)
+    boot_df.to_csv(f'{RESULTS_DIR}/bootstrap_ci.csv', index=False)
+
+    # ── 5. DeLong tests ──
+    print(f"\n{'='*60}")
+    print("DELONG TESTS (pairwise ROC-AUC comparison)")
+    print(f"{'='*60}")
+    delong_rows = []
+    for fs_name in FEATURE_SETS:
+        _, X_test, _, y_test, _, _ = prepare_features(train_df, test_df, FEATURE_SETS[fs_name])
+        best_strat_for_fs = res[res['features'] == fs_name].sort_values('pr_auc', ascending=False).iloc[0]['strategy']
+
+        model_names = ['LR', 'RF', 'XGBoost']
+        probs = {}
+        for mn in model_names:
+            key = (fs_name, best_strat_for_fs, mn)
+            if key in trained_models_probs:
+                probs[mn] = trained_models_probs[key]
+
+        for (m1, m2) in combinations(probs.keys(), 2):
+            auc1, auc2, z, p = delong_test(y_test, probs[m1], probs[m2])
+            sig = "***" if p < 0.001 else ("**" if p < 0.01 else ("*" if p < 0.05 else "ns"))
+            print(f"  {fs_name:15s} {m1} vs {m2}: AUC {auc1:.3f} vs {auc2:.3f}, z={z:.2f}, p={p:.4f} {sig}")
+            delong_rows.append({
+                'features': fs_name, 'strategy': best_strat_for_fs,
+                'model_a': m1, 'model_b': m2,
+                'auc_a': auc1, 'auc_b': auc2,
+                'z_statistic': z, 'p_value': p, 'significance': sig,
+            })
+
+    delong_df = pd.DataFrame(delong_rows)
+    delong_df.to_csv(f'{RESULTS_DIR}/supplementary/delong_tests.csv', index=False)
+
+    # ── 6. Framingham baseline ──
     print(f"\n{'='*60}")
     print("FRAMINGHAM-STYLE CLINICAL BASELINE")
     print(f"{'='*60}")
@@ -130,7 +195,7 @@ def main():
     print(f"  Best ML:     ROC-AUC={best_row['roc_auc']:.3f}, PR-AUC={best_row['pr_auc']:.3f} "
           f"({best_row['model']}, {best_row['features']}, {best_row['strategy']})")
 
-    # ── 5. Fairness analysis ──
+    # ── 7. Fairness analysis ──
     print(f"\n{'='*60}")
     print(f"FAIRNESS ANALYSIS — {best_info['model_name']} "
           f"({best_info['fs_name']}, {best_info['strategy']})")
@@ -143,7 +208,7 @@ def main():
         print(fair_df[show].to_string(index=False, float_format='%.3f'))
         fair_df.to_csv(f'{RESULTS_DIR}/fairness_results.csv', index=False)
 
-    # ── 6. Feature importance ──
+    # ── 8. Feature importance ──
     print(f"\n{'='*60}")
     print(f"FEATURE IMPORTANCE — {best_info['model_name']}")
     print(f"{'='*60}")
@@ -152,7 +217,7 @@ def main():
         display_col = 'coefficient' if 'coefficient' in fi.columns else 'importance'
         print(fi[['feature', display_col]].to_string(index=False, float_format='%.4f'))
 
-    # ── 7. Paper tables ──
+    # ── 9. Paper tables ──
     print(f"\n{'='*60}")
     print("GENERATING PAPER TABLES")
     print(f"{'='*60}")
@@ -173,32 +238,39 @@ def main():
     table10_vs_published(res)
     print("  Table 10: table10_vs_published.csv")
 
-    # ── 8. Figures ──
+    # ── 10. Figures ──
     print(f"\n{'='*60}")
-    print("GENERATING FIGURES")
+    print("GENERATING FIGURES (publication quality, PNG + PDF)")
     print(f"{'='*60}")
 
     fig1_pr_auc_bars(res)
-    print("  Fig 1: fig1_pr_auc_comparison.png")
+    print("  Fig 1: fig1_pr_auc_comparison")
 
     fig2_roc_pr_curves(train_df, test_df, best_info['fs_name'], best_info['strategy'],
                        pos_weight, f_roc, f_pr, f_scores)
-    print("  Fig 2: fig2_roc_pr_curves.png")
+    print("  Fig 2: fig2_roc_pr_curves")
 
     fig3_calibration(best_model, best_info['X_test'], best_info['y_test'],
                      best_info['model_name'], best_info['brier'])
-    print("  Fig 3: fig3_calibration_curve.png")
+    print("  Fig 3: fig3_calibration_curve")
 
     if fi is not None:
-        print("  Fig 4: fig4_feature_importance.png")
+        print("  Fig 4: fig4_feature_importance")
 
     fig5_confusion_matrices(train_df, test_df)
-    print("  Fig 5: fig5_confusion_matrices.png")
+    print("  Fig 5: fig5_confusion_matrices")
 
     fig6_fairness_bars(fair_df)
-    print("  Fig 6: fig6_fairness_bars.png")
+    print("  Fig 6: fig6_fairness_bars")
 
-    # ── 9. Summary ──
+    # ── 11. TRIPOD checklist ──
+    print(f"\n{'='*60}")
+    print("TRIPOD CHECKLIST")
+    print(f"{'='*60}")
+    tripod = generate_tripod_checklist()
+    print(f"  {len(tripod)} items mapped → supplementary/tripod_checklist.csv")
+
+    # ── 12. Summary ──
     print(f"\n{'='*60}")
     print("SUMMARY")
     print(f"{'='*60}")
@@ -222,8 +294,19 @@ def main():
     print(f"\n4. CLINICAL BASELINE:")
     print(f"   Framingham PR-AUC={f_pr:.3f}  vs  Best ML PR-AUC={best_row['pr_auc']:.3f}")
 
-    print(f"\nAll outputs saved to {RESULTS_DIR}/")
-    print("Done!")
+    # Output inventory
+    print(f"\n{'='*60}")
+    print("OUTPUT INVENTORY")
+    print(f"{'='*60}")
+    for root, dirs, files in os.walk(RESULTS_DIR):
+        level = root.replace(RESULTS_DIR, '').count(os.sep)
+        indent = '  ' * level
+        subdir = os.path.basename(root) + '/' if level > 0 else ''
+        for f in sorted(files):
+            size = os.path.getsize(os.path.join(root, f))
+            print(f"  {indent}{subdir}{f} ({size/1024:.0f} KB)")
+
+    print("\nDone!")
 
 
 if __name__ == '__main__':
