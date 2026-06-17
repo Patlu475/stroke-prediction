@@ -1,0 +1,9 @@
+Paper,Model,Dataset,Reported Accuracy,Reported AUC,Imbalance,Reported F1,Note,PR-AUC,Recall,Brier
+Sinkron 2025,XGBoost,"Kaggle 5,110",0.95,,SMOTE,,,,,
+IJACSA 2021,Naive Bayes,Kaggle 498,0.82,0.82,Undersampling,,,,,
+Gao 2024,DNN,Kaggle 10K (WGAN-GP),,,WGAN-GP,0.97,,,,
+Diagnostics 2024,XGBoost,"Kaggle 4,981",0.92,0.97,Down+Upsample,,,,,
+Frontiers 2025,LR,"Kaggle 5,110",0.95,0.84,Random Oversample,,0 true positives,,,
+Sensors 2022,Stacking,"Kaggle 3,254",0.98,0.989,SMOTE (leakage risk),,,,,
+Sensors 2025,RF+LGBM Meta,3 Kaggle sets,0.992,1.0,SMOTE-SMOTEENN (leakage risk),,,,,
+This study,LR,"NHANES 34,719 (real clinical)",0.7743280404506343,0.8229604661330269,cost_sensitive,,"Temporal validation, clinical data",0.16192324515053766,0.6742738589211619,0.15145905966450213

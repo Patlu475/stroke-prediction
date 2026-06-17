@@ -1,0 +1,11 @@
+Dimension,Kaggle Stroke Dataset,NHANES (This Study)
+Source,Unknown provenance (fedesoriano),"CDC, nationally representative"
+Sample size,"5,110","34,719"
+Stroke cases,249 (4.9%),"1,398 (4.0%)"
+Features,10 (self-reported),22 (clinically measured)
+Lab measurements,0,"7 (chol., HDL, HbA1c, WBC, Hgb, plt, total chol.)"
+Blood pressure,No,"Yes (examiner-measured, 3 readings averaged)"
+Race/ethnicity,No,Yes (5 categories)
+Income/SES,No,Yes (income-to-poverty ratio)
+Temporal validation,No (single snapshot),"Yes (6 cycles, 2007-2018)"
+Stroke outcome,Unknown labeling method,Self-reported physician diagnosis
